@@ -1,0 +1,168 @@
+/**
+ *  Package and Import Specifications
+ */
+import java_cup.runtime.*;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.text.ParseException;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/**
+ *  Usercode Components
+*/
+action code {:
+    void writeToFile(String text) {
+        try {
+            FileWriter fileWriter = new FileWriter("output/Main.java", false);
+            fileWriter.write(text);
+            fileWriter.close();
+        } catch (IOException error) {
+            error.printStackTrace();
+        }
+    }
+
+    String generateMainClass(String code) {
+        return "public class Main {\n" + code + "}";
+    }
+
+    String generateMainFunction(String code) {
+        return "\tpublic static void main(String[] args) {\n" + code + "\t}\n";
+    }
+
+    String generateDeclarationFunction(String functionStart, String arguments, String expression) {
+        return "\tpublic static String " + functionStart + arguments + ")" + "{" + "\n\t\treturn " + expression + ";\n\t}\n\n";
+    }
+
+    String generateMainExpression(String s) {
+        return "\t\tSystem.out.println(" + s + ");\n";
+    }
+
+    String extractStart(String func_decl_start) {
+        // Split the string in 2 segments. The function name then ( and the rest...
+        String[] tokens = func_decl_start.split("\\(", 2);
+        // Return the name of the declaration function 
+        String func_start = tokens[0] + "(";
+
+        return func_start;
+    }
+
+
+    String extractParams(String func_decl_start) {
+        String result = new String();
+        String func_params = new String();
+
+        // Using a RE to extract the string between the parantheses.
+        Matcher matcher = Pattern.compile("\\((.*?)\\)").matcher(func_decl_start);
+		while (matcher.find()) {
+    		result = matcher.group(1);
+		}
+
+        // Split the above string into pecies seperated with commas.
+        // And reconstruct a new string for the parameters including the data type String and commas.
+        String[] params = result.split(",");
+        for (int i = 0; i < params.length; i++) {
+            if (params[i].length() == 0)
+                continue;
+
+            if (i != 0) {
+                func_params += ", ";
+            }
+            func_params += "String " + params[i];
+        }
+
+        return func_params;
+    }
+
+:};
+
+parser code {:
+    // Connect this parser to a scanner!
+    Scanner s;
+    Parser(Scanner s){ this.s=s; }
+:};
+
+/* define how to connect to the scanner! */
+scan with {: return s.next_token(); :};
+
+/**
+ *  Symbol Lists
+ */
+
+/* Terminals (tokens returned by the scanner). */
+terminal            PLUS, RPAREN, RBRACKET, IF, ELSE, SUFFIX, PREFIX, COMMA;
+terminal String     STRING_LITERAL, IDENTIFIER, FUNCTION_START, DECLARATION_FUNCTION_START;
+
+/*  Non terminals */
+non terminal String expression, condition_function, condition_function_tail, declarations, declaration, main, if_statement, concatenation, function_call, args, args_tail;
+non terminal program;
+
+/**
+ *  Precedence Declarations
+ */
+
+// precedence(if) < precedence(prefix/suffix) < precedence(concat) < precedence(function_call).
+precedence left IF, ELSE;
+precedence left PREFIX, SUFFIX;
+precedence left PLUS;
+precedence left FUNCTION_START;
+
+/**
+ *  The Grammar Rules
+ */
+
+// A program consists of the functions' declarations and the main function.
+program ::= declarations:decls main:main        {:  String code = generateMainClass(decls + generateMainFunction(main));
+                                                    writeToFile(code);
+                                                    //System.out.println(code);
+                                                :}
+;
+
+// A sequence of declarations.
+declarations ::= declaration:decl declarations:decls    {: RESULT = decl + decls; :}
+                | /* e */                               {: RESULT = ""; :}
+;
+
+// A declaration consists of the terminal string DECLARATION_FUNCTION_START, the expression inside it and a closing bracket.
+declaration ::= DECLARATION_FUNCTION_START:delc_funct_start expression:expr RBRACKET        {: RESULT = generateDeclarationFunction(extractStart(delc_funct_start), extractParams(delc_funct_start), expr); :};
+
+// A sequence of expressions is what the main function consists of.
+main ::= expression:main_expr main:rest                 {: RESULT = generateMainExpression(main_expr) + rest; :}
+        | /* e */                                       {: RESULT = ""; :}
+;
+
+// An expression could be an if statement, a concatenation, a function call, a string or an identifier (variable).
+expression ::= if_statement:ifStatement                {: RESULT = "(" + ifStatement + ")"; :}
+            | concatenation:concat                     {: RESULT = "(" + concat + ")"; :}
+            | function_call:function                   {: RESULT = function; :}
+            | IDENTIFIER:id                            {: RESULT = id; :}
+            | STRING_LITERAL:str                       {: RESULT = "\"" + str + "\""; :}
+;
+
+// An if statement consists of the terminal IF, the condition inside, a closing parenthesis, an expression in favour of the conditional, 
+// an ELSE terminal and an expression in favour of the negation of the conditional.
+if_statement ::= IF condition_function:condition RPAREN expression:expr1 ELSE expression:expr2                  {: RESULT = condition + " ? " + expr1 + " : " + expr2 + ""; :};
+
+// The start of the condition...
+condition_function ::= expression:expr condition_function_tail:cond_func_tail                                   {: RESULT = cond_func_tail + "(" + expr + ")"; :};
+
+// The rest of the condition (choose between suffix, prefix).
+condition_function_tail ::= SUFFIX expression:expr      {: RESULT = expr + "." + "endsWith"; :}
+                        |   PREFIX expression:expr      {: RESULT = expr + "." + "startsWith"; :}
+;
+
+// Concatenation
+concatenation ::= expression:exp1 PLUS expression:exp2              {: RESULT = exp1 + " + " + exp2; :};
+
+// A function call consists of the terminal string FUNCTION_START, the arguments of the function and a closing parenthesis.
+function_call ::= FUNCTION_START:func_start args:args RPAREN        {: RESULT = func_start + args + ")"; :};
+
+// The start of the arguments' list...
+args        ::= expression:expr args_tail:args              {: RESULT = expr + args; :}
+            | /* e */                                       {: RESULT = ""; :}
+;
+
+// The rest of the arguments' list, including commas between arguments.
+args_tail   ::= COMMA expression:expr args_tail:args        {: RESULT = ", " + expr + args; :}
+            | /* e */                                       {: RESULT = ""; :}
+;
